@@ -1,0 +1,27 @@
+# Normalize line endings: store LF in the repo, check out native on Windows
+* text=auto eol=lf
+
+# Explicitly declare binary assets so Git never mangles them
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+
+# Keep text-ish assets as text
+*.svg text
+*.json text
+*.md text
+*.css text
+*.ts text
+*.tsx text
+*.html text
+
+# Collapse generated files in diffs and GitHub linguist
+package-lock.json -diff linguist-generated
