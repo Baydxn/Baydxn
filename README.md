@@ -131,9 +131,41 @@ WhatsApp rather than pretending an email was sent.
 VITE_WEB3FORMS_ACCESS_KEY=your_access_key_here
 ```
 
-5. Restart the dev server (`npm run dev`) or redeploy.
+5. Restart the dev server (`npm run dev`) — or redeploy, see below.
 
 The inbox is bound to the key itself, so no email address needs to live in the source.
+
+### Deploying to Vercel — important
+
+`.env` is git-ignored, so it is **not** deployed with your repository. Because Vite
+inlines `VITE_` variables at **build time**, the key must exist when Vercel builds.
+
+**Option A — Vercel dashboard (recommended)**
+
+1. Repo → **Settings** → **Environment Variables**
+2. Add `VITE_WEB3FORMS_ACCESS_KEY` for **Production**, **Preview** and **Development**
+3. Redeploy (a fresh deploy is required — env vars are baked in at build time)
+
+**Option B — commit the key**
+
+Because a Web3Forms access key is public by design, you may also place it directly in
+`.env.example` and commit that file. The trade-off is that scrapers can then read the
+key and use your quota, so Option A is preferable.
+
+### Verifying on the live site
+
+Submit the form from your **deployed** domain. Some providers reject requests that
+originate from `localhost`, so the production URL is the authoritative test. A working
+submission shows **"Brief Delivered."** with a `TRANSMITTED • DELIVERY CONFIRMED` badge,
+and the brief arrives in the inbox with `Reply-To` set to the visitor's address.
+
+### Notes
+
+- The brief is sent as JSON, which Web3Forms accepts alongside `FormData`
+- The visitor's email is used as `Reply-To`, so hitting reply goes straight to them
+- Custom fields (`company`, `project_type`, `budget_range`) appear as separate rows
+- All three delivery options can be tested with an intentionally invalid key — the form
+  shows a retryable error instead of a false success
 
 ### Env variables
 
