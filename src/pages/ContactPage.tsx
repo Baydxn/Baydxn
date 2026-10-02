@@ -38,12 +38,47 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const INPUT_CLASS =
   'w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm';
 
+/**
+ * Copy text with an honest success signal.
+ *
+ * `navigator.clipboard` needs a secure context and a focused document, so it can
+ * genuinely fail. Falls back to a hidden textarea, and reports the real outcome
+ * rather than assuming the copy worked.
+ */
+async function writeToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the legacy path below.
+  }
+
+  try {
+    const scratch = document.createElement('textarea');
+    scratch.value = text;
+    scratch.setAttribute('readonly', '');
+    scratch.style.position = 'fixed';
+    scratch.style.top = '-1000px';
+    scratch.style.opacity = '0';
+    document.body.appendChild(scratch);
+    scratch.select();
+    const succeeded = document.execCommand('copy');
+    document.body.removeChild(scratch);
+    return succeeded;
+  } catch {
+    return false;
+  }
+}
+
 export const ContactPage: React.FC = () => {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [status, setStatus] = useState<FormStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [briefHint, setBriefHint] = useState(false);
 
   const isSending = status === 'sending';
 
@@ -53,6 +88,7 @@ export const ContactPage: React.FC = () => {
     const { name, value } = e.target;
 
     setFormData((prev) => ({ ...prev, [name]: value }));
+    setBriefHint(false);
 
     // Clear a field's error as soon as the visitor starts correcting it.
     setFieldErrors((prev) => {
@@ -142,34 +178,66 @@ export const ContactPage: React.FC = () => {
   };
 
 
-  // Dynamic WhatsApp handoff that carries the formatted brief across.
-  const generatedWhatsAppMessage = useMemo(
-    () =>
-      [
-        'Hello Bayd XN 👋,',
-        `My name is ${formData.name || 'there'} from ${formData.company || 'my venture'}.`,
-        `Project Type: ${formData.projectType}`,
-        `Budget Range: ${formData.budgetRange}`,
-        `Project Details: ${formData.description || 'I would like to explore building a custom digital experience.'}`,
-        `Email: ${formData.email || 'N/A'}`,
-      ].join('\n'),
-    [formData]
-  );
+  /**
+   * The formatted brief a visitor can copy or send themselves. Carries every
+   * detail they entered — name, company, email, project type and budget —
+   * so nothing has to be retyped on the other side.
+   */
+  const formattedBrief = useMemo(() => {
+    const name = formData.name.trim();
+    const description = formData.description.trim();
+
+    // Nothing meaningful entered yet.
+    if (!name && !description) return '';
+
+    return [
+      'Hello Bayd XN 👋,',
+      '',
+      'NEW PROJECT BRIEF',
+      '',
+      `Name: ${name || 'Not provided'}`,
+      `Company: ${formData.company.trim() || 'Not provided'}`,
+      `Email: ${formData.email.trim() || 'Not provided'}`,
+      `Project Type: ${formData.projectType}`,
+      `Budget Range: ${formData.budgetRange}`,
+      '',
+      'PROJECT DETAILS',
+      description || 'I would like to discuss a custom digital project.',
+    ].join('\n');
+  }, [formData]);
+
+  const hasBriefContent = formattedBrief.length > 0;
 
   const customWhatsAppUrl = `https://wa.me/${siteConfig.social.whatsappRaw}?text=${encodeURIComponent(
-    formData.name ? generatedWhatsAppMessage : siteConfig.social.whatsappPrefilledMessage
+    hasBriefContent ? formattedBrief : siteConfig.social.whatsappPrefilledMessage
   )}`;
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedWhatsAppMessage);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async () => {
+    if (!hasBriefContent) {
+      setBriefHint(true);
+      return;
+    }
+
+    const succeeded = await writeToClipboard(formattedBrief);
+
+    setCopyState(succeeded ? 'copied' : 'failed');
+    window.setTimeout(() => setCopyState('idle'), 2500);
+  };
+
+  /** Only redirect once there is a brief to carry, otherwise prompt first. */
+  const handleWhatsAppClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!hasBriefContent) {
+      e.preventDefault();
+      setBriefHint(true);
+    }
   };
 
   const resetForm = () => {
     setFormData(INITIAL_FORM);
     setFieldErrors({});
     setErrorMessage('');
+    setBriefHint(false);
+    setCopyState('idle');
     setStatus('idle');
   };
 
@@ -246,8 +314,20 @@ export const ContactPage: React.FC = () => {
                   onClick={copyToClipboard}
                   className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-zinc-800 text-zinc-200 font-mono text-xs hover:bg-zinc-700 transition-colors"
                 >
-                  {copied ? <Check className="w-4 h-4 text-white" /> : <Copy className="w-4 h-4" />}
-                  <span>{copied ? 'Brief Copied!' : 'Copy Formatted Brief'}</span>
+                  {copyState === 'copied' ? (
+                    <Check className="w-4 h-4 text-white" />
+                  ) : copyState === 'failed' ? (
+                    <AlertTriangle className="w-4 h-4 text-white" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                  <span>
+                    {copyState === 'copied'
+                      ? 'Brief Copied!'
+                      : copyState === 'failed'
+                        ? 'Copy Blocked'
+                        : 'Copy Formatted Brief'}
+                  </span>
                 </button>
               </div>
 
@@ -463,7 +543,7 @@ export const ContactPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Submit CTA */}
+              {/* Two ways to reach Bayd XN */}
               <div className="pt-2">
                 <button
                   type="submit"
@@ -485,8 +565,63 @@ export const ContactPage: React.FC = () => {
 
                 <p className="mt-3 text-[11px] font-mono text-zinc-400 text-center">
                   {isMailerConfigured
-                    ? 'Delivered directly to Bayd XN. Replies within 24 hours.'
-                    : 'Reviewed personally. Replies within 24 hours.'}
+                    ? 'Option 1 — Emailed directly to Bayd XN. Replies within 24 hours.'
+                    : 'Option 1 — Reviewed personally. Replies within 24 hours.'}
+                </p>
+
+                {/* Divider */}
+                <div className="flex items-center gap-3 my-5" aria-hidden="true">
+                  <span className="h-px flex-1 bg-zinc-800" />
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-400">
+                    Or send it yourself
+                  </span>
+                  <span className="h-px flex-1 bg-zinc-800" />
+                </div>
+
+                {briefHint && (
+                  <p className="mb-3 text-center text-[11px] font-mono text-zinc-300">
+                    Add your name and a short brief first, then copy or send it.
+                  </p>
+                )}
+
+                {/* Option 2 — copy or send the formatted brief */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    className="w-full py-3.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-200 font-mono text-xs hover:bg-zinc-800 hover:text-white hover:border-zinc-500 transition-all flex items-center justify-center gap-2"
+                  >
+                    {copyState === 'copied' ? (
+                      <Check className="w-4 h-4 text-white" />
+                    ) : copyState === 'failed' ? (
+                      <AlertTriangle className="w-4 h-4 text-white" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                    <span>
+                      {copyState === 'copied'
+                        ? 'Brief Copied!'
+                        : copyState === 'failed'
+                          ? 'Copy Blocked — Use WhatsApp'
+                          : 'Copy Formatted Brief'}
+                    </span>
+                  </button>
+
+                  <a
+                    href={customWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={handleWhatsAppClick}
+                    className="w-full py-3.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-200 font-mono text-xs hover:bg-zinc-800 hover:text-white hover:border-zinc-500 transition-all flex items-center justify-center gap-2"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Send on WhatsApp</span>
+                  </a>
+                </div>
+
+                <p className="mt-3 text-[10px] font-mono text-zinc-400 text-center leading-relaxed">
+                  Option 2 — Your name, company, email, project type, budget and brief
+                  are carried across automatically.
                 </p>
               </div>
             </form>
