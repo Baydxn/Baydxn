@@ -17,7 +17,8 @@ export const siteConfig = {
     get whatsappUrl() {
       return `https://wa.me/${this.whatsappRaw}?text=${encodeURIComponent(this.whatsappPrefilledMessage)}`;
     },
-    email: 'contact@baydxn.com',
+    email: 'cc99187197@gmail.com',
+    contactInbox: 'cc99187197@gmail.com',
   },
   routes: [
     { path: '/', label: 'Home', chapter: '01', title: 'Index / Hero' },

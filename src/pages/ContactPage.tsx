@@ -1,37 +1,90 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import confetti from 'canvas-confetti';
-import { MessageCircle, Send, CheckCircle2, ArrowUpRight, Copy, Check } from 'lucide-react';
+import {
+  MessageCircle,
+  Send,
+  CheckCircle2,
+  ArrowUpRight,
+  Copy,
+  Check,
+  Loader2,
+  AlertTriangle,
+} from 'lucide-react';
 import { PageLayout } from '../components/PageLayout';
 import { Reveal } from '../components/Reveal';
 import { RevealText } from '../components/RevealText';
 import { siteConfig } from '../data/siteConfig';
+import {
+  contactInbox,
+  isMailerConfigured,
+  sendProjectBrief,
+  type ContactSubmission,
+} from '../lib/contactMailer';
+
+type FormStatus = 'idle' | 'sending' | 'success' | 'error';
+
+const INITIAL_FORM: ContactSubmission & { botField: string } = {
+  name: '',
+  email: '',
+  company: '',
+  projectType: 'Web Development',
+  budgetRange: '$1,500 - $3,500',
+  description: '',
+  botField: '',
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+const INPUT_CLASS =
+  'w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm';
 
 export const ContactPage: React.FC = () => {
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    company: '',
-    projectType: 'Web Development',
-    budgetRange: '$1,500 - $3,500',
-    description: '',
-  });
-
-  const [submitted, setSubmitted] = useState(false);
+  const [formData, setFormData] = useState(INITIAL_FORM);
+  const [status, setStatus] = useState<FormStatus>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
+
+  const isSending = status === 'sending';
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [e.target.name]: e.target.value,
-    }));
+    const { name, value } = e.target;
+
+    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    // Clear a field's error as soon as the visitor starts correcting it.
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const validate = (): boolean => {
+    const errors: Record<string, string> = {};
 
-    // Trigger elegant confetti celebration
+    if (!formData.name.trim()) {
+      errors.name = 'Please enter your name.';
+    }
+
+    if (!formData.email.trim()) {
+      errors.email = 'Please enter your email address.';
+    } else if (!EMAIL_PATTERN.test(formData.email.trim())) {
+      errors.email = 'That email address doesn’t look right.';
+    }
+
+    if (formData.description.trim().length < 20) {
+      errors.description = 'Please describe your project in at least 20 characters.';
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const celebrate = () => {
     try {
       confetti({
         particleCount: 60,
@@ -39,20 +92,69 @@ export const ContactPage: React.FC = () => {
         origin: { y: 0.6 },
         colors: ['#ffffff', '#a1a1aa', '#52525b'],
       });
-    } catch (err) {
-      // fallback if canvas not available
+    } catch {
+      // Canvas unavailable — celebration is non-critical.
     }
-
-    setSubmitted(true);
   };
 
-  // Generate dynamic WhatsApp link including form details
-  const generatedWhatsAppMessage = `Hello Bayd XN 👋,
-My name is ${formData.name || 'there'} from ${formData.company || 'my venture'}.
-Project Type: ${formData.projectType}
-Budget Range: ${formData.budgetRange}
-Project Details: ${formData.description || 'I would like to explore building a custom digital experience.'}
-Email: ${formData.email || 'N/A'}`;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSending) return;
+
+    // Honeypot: hidden field only a bot would fill. Fails silently.
+    if (formData.botField.trim()) {
+      setStatus('success');
+      return;
+    }
+
+    if (!validate()) {
+      setStatus('idle');
+      return;
+    }
+
+    // No delivery channel is configured yet. Rather than pretend an email was
+    // sent (or show a scary error), format the brief and hand it to WhatsApp.
+    if (!isMailerConfigured) {
+      setStatus('success');
+      return;
+    }
+
+    setStatus('sending');
+    setErrorMessage('');
+
+    const result = await sendProjectBrief({
+      name: formData.name.trim(),
+      email: formData.email.trim(),
+      company: formData.company.trim(),
+      projectType: formData.projectType,
+      budgetRange: formData.budgetRange,
+      description: formData.description.trim(),
+    });
+
+    if (result.ok) {
+      celebrate();
+      setStatus('success');
+      return;
+    }
+
+    setErrorMessage(result.reason);
+    setStatus('error');
+  };
+
+
+  // Dynamic WhatsApp handoff that carries the formatted brief across.
+  const generatedWhatsAppMessage = useMemo(
+    () =>
+      [
+        'Hello Bayd XN 👋,',
+        `My name is ${formData.name || 'there'} from ${formData.company || 'my venture'}.`,
+        `Project Type: ${formData.projectType}`,
+        `Budget Range: ${formData.budgetRange}`,
+        `Project Details: ${formData.description || 'I would like to explore building a custom digital experience.'}`,
+        `Email: ${formData.email || 'N/A'}`,
+      ].join('\n'),
+    [formData]
+  );
 
   const customWhatsAppUrl = `https://wa.me/${siteConfig.social.whatsappRaw}?text=${encodeURIComponent(
     formData.name ? generatedWhatsAppMessage : siteConfig.social.whatsappPrefilledMessage
@@ -61,7 +163,14 @@ Email: ${formData.email || 'N/A'}`;
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedWhatsAppMessage);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const resetForm = () => {
+    setFormData(INITIAL_FORM);
+    setFieldErrors({});
+    setErrorMessage('');
+    setStatus('idle');
   };
 
   return (
@@ -98,18 +207,28 @@ Email: ${formData.email || 'N/A'}`;
       <section className="py-16 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
         {/* Form Column */}
         <div className="lg:col-span-7">
-          {submitted ? (
+          {status === 'success' ? (
             <div className="p-8 sm:p-12 rounded-3xl bg-zinc-900/80 border border-zinc-700/80 shadow-2xl animate-in fade-in duration-300">
               <div className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center mb-6">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
 
               <h2 className="font-display font-bold text-3xl text-white">
-                Brief Received &amp; Formatted.
+                {isMailerConfigured ? 'Brief Delivered.' : 'Brief Ready to Send.'}
               </h2>
               <p className="mt-3 text-sm text-zinc-300 leading-relaxed">
-                Thank you, <strong className="text-white">{formData.name}</strong>. Your project brief has been structured. To accelerate communication, you can open a direct WhatsApp conversation right now with your inquiry pre-filled.
+                Thank you, <strong className="text-white">{formData.name}</strong>.{' '}
+                {isMailerConfigured
+                  ? 'Your project brief has been sent directly to Bayd XN and will be reviewed personally. Expect a reply within 24 hours.'
+                  : 'Your brief is formatted and ready. Send it directly on WhatsApp to reach Bayd XN right now.'}
               </p>
+
+              <div className="mt-5 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-950/80 border border-zinc-800 text-[11px] font-mono text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                {isMailerConfigured
+                  ? 'TRANSMITTED • DELIVERY CONFIRMED'
+                  : 'READY • SEND VIA WHATSAPP'}
+              </div>
 
               <div className="mt-8 flex flex-col sm:flex-row gap-3">
                 <a
@@ -119,7 +238,7 @@ Email: ${formData.email || 'N/A'}`;
                   className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-white text-black font-bold text-xs hover:bg-zinc-200 transition-colors shadow-xl"
                 >
                   <MessageCircle className="w-4 h-4" />
-                  <span>Send Directly on WhatsApp</span>
+                  <span>{isMailerConfigured ? 'Also Send on WhatsApp' : 'Send on WhatsApp'}</span>
                 </a>
 
                 <button
@@ -127,14 +246,14 @@ Email: ${formData.email || 'N/A'}`;
                   onClick={copyToClipboard}
                   className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-zinc-800 text-zinc-200 font-mono text-xs hover:bg-zinc-700 transition-colors"
                 >
-                  {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copied ? <Check className="w-4 h-4 text-white" /> : <Copy className="w-4 h-4" />}
                   <span>{copied ? 'Brief Copied!' : 'Copy Formatted Brief'}</span>
                 </button>
               </div>
 
               <button
                 type="button"
-                onClick={() => setSubmitted(false)}
+                onClick={resetForm}
                 className="mt-8 text-xs font-mono text-zinc-400 hover:text-white underline underline-offset-4"
               >
                 ← Edit Form Data
@@ -143,6 +262,7 @@ Email: ${formData.email || 'N/A'}`;
           ) : (
             <form
               onSubmit={handleSubmit}
+              noValidate
               className="p-8 sm:p-10 rounded-3xl bg-zinc-900/60 border border-zinc-800/80 shadow-2xl space-y-6"
             >
               <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
@@ -150,9 +270,32 @@ Email: ${formData.email || 'N/A'}`;
                   PROJECT SPECIFICATION FORM
                 </span>
                 <span className="text-[11px] font-mono text-zinc-400">
-                  ALL FIELDS CAREFULLY REVIEWED
+                  {isSending ? 'TRANSMITTING…' : 'ALL FIELDS CAREFULLY REVIEWED'}
                 </span>
               </div>
+
+              {/* Honeypot — hidden from humans and assistive tech, tempting to bots */}
+              <div className="hidden" aria-hidden="true">
+                <label htmlFor="botField">Leave this field empty</label>
+                <input
+                  type="text"
+                  id="botField"
+                  name="botField"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={formData.botField}
+                  onChange={handleChange}
+                />
+              </div>
+
+              {/* Status channel for screen readers */}
+              <p aria-live="polite" className="sr-only">
+                {isSending
+                  ? 'Sending your project brief.'
+                  : status === 'error'
+                    ? errorMessage
+                    : ''}
+              </p>
 
               {/* Name & Email */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -168,8 +311,18 @@ Email: ${formData.email || 'N/A'}`;
                     value={formData.name}
                     onChange={handleChange}
                     placeholder="e.g. Alex Vance"
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm"
+                    disabled={isSending}
+                    aria-invalid={Boolean(fieldErrors.name)}
+                    aria-describedby={fieldErrors.name ? 'name-error' : undefined}
+                    className={`${INPUT_CLASS} disabled:opacity-60 ${
+                      fieldErrors.name ? 'border-zinc-400' : ''
+                    }`}
                   />
+                  {fieldErrors.name && (
+                    <p id="name-error" className="mt-1.5 text-[11px] font-mono text-zinc-300">
+                      {fieldErrors.name}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -184,8 +337,18 @@ Email: ${formData.email || 'N/A'}`;
                     value={formData.email}
                     onChange={handleChange}
                     placeholder="alex@company.com"
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm"
+                    disabled={isSending}
+                    aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? 'email-error' : undefined}
+                    className={`${INPUT_CLASS} disabled:opacity-60 ${
+                      fieldErrors.email ? 'border-zinc-400' : ''
+                    }`}
                   />
+                  {fieldErrors.email && (
+                    <p id="email-error" className="mt-1.5 text-[11px] font-mono text-zinc-300">
+                      {fieldErrors.email}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -201,7 +364,8 @@ Email: ${formData.email || 'N/A'}`;
                   value={formData.company}
                   onChange={handleChange}
                   placeholder="e.g. Studio Vertex / Startup Name"
-                  className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm"
+                  disabled={isSending}
+                  className={`${INPUT_CLASS} disabled:opacity-60`}
                 />
               </div>
 
@@ -216,7 +380,8 @@ Email: ${formData.email || 'N/A'}`;
                     name="projectType"
                     value={formData.projectType}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm"
+                    disabled={isSending}
+                    className={`${INPUT_CLASS} disabled:opacity-60`}
                   >
                     <option value="Web Development">Web Development</option>
                     <option value="UI / UX & Digital Design">UI / UX &amp; Digital Design</option>
@@ -235,7 +400,8 @@ Email: ${formData.email || 'N/A'}`;
                     name="budgetRange"
                     value={formData.budgetRange}
                     onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm"
+                    disabled={isSending}
+                    className={`${INPUT_CLASS} disabled:opacity-60`}
                   >
                     <option value="$1,500 - $3,500">$1,500 – $3,500</option>
                     <option value="$3,500 - $7,500">$3,500 – $7,500</option>
@@ -258,19 +424,70 @@ Email: ${formData.email || 'N/A'}`;
                   value={formData.description}
                   onChange={handleChange}
                   placeholder="Outline the core objective, any existing assets or timelines, and what success looks like..."
-                  className="w-full px-4 py-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-white placeholder-zinc-600 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-colors text-sm resize-none"
+                  disabled={isSending}
+                  aria-invalid={Boolean(fieldErrors.description)}
+                  aria-describedby={fieldErrors.description ? 'description-error' : undefined}
+                  className={`${INPUT_CLASS} resize-none disabled:opacity-60 ${
+                    fieldErrors.description ? 'border-zinc-400' : ''
+                  }`}
                 />
+                {fieldErrors.description && (
+                  <p id="description-error" className="mt-1.5 text-[11px] font-mono text-zinc-300">
+                    {fieldErrors.description}
+                  </p>
+                )}
               </div>
+
+              {/* Delivery failure notice */}
+              {status === 'error' && (
+                <div
+                  role="alert"
+                  className="p-4 rounded-xl bg-zinc-950/80 border border-zinc-700 flex items-start gap-3"
+                >
+                  <AlertTriangle className="w-4 h-4 text-white mt-0.5 shrink-0" />
+                  <div className="text-xs text-zinc-300 leading-relaxed">
+                    <strong className="text-white block mb-0.5">
+                      Your brief could not be sent.
+                    </strong>
+                    {errorMessage} You can{' '}
+                    <a
+                      href={customWhatsAppUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-white underline underline-offset-4 hover:text-zinc-300"
+                    >
+                      send it on WhatsApp
+                    </a>{' '}
+                    instead, or try again.
+                  </div>
+                </div>
+              )}
 
               {/* Submit CTA */}
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-4 rounded-xl bg-white text-black font-display font-extrabold text-sm tracking-wide hover:bg-zinc-200 transition-all shadow-xl flex items-center justify-center gap-2 transform hover:scale-[1.01] active:scale-[0.99]"
+                  disabled={isSending}
+                  className="w-full py-4 rounded-xl bg-white text-black font-display font-extrabold text-sm tracking-wide hover:bg-zinc-200 transition-all shadow-xl flex items-center justify-center gap-2 transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
-                  <Send className="w-4 h-4" />
-                  <span>START THE CONVERSATION</span>
+                  {isSending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>SENDING YOUR BRIEF…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>START THE CONVERSATION</span>
+                    </>
+                  )}
                 </button>
+
+                <p className="mt-3 text-[11px] font-mono text-zinc-400 text-center">
+                  {isMailerConfigured
+                    ? 'Delivered directly to Bayd XN. Replies within 24 hours.'
+                    : 'Reviewed personally. Replies within 24 hours.'}
+                </p>
               </div>
             </form>
           )}
@@ -300,7 +517,7 @@ Email: ${formData.email || 'N/A'}`;
 
             <div className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800 font-mono text-xs text-zinc-300 mb-6 flex items-center justify-between">
               <span>{siteConfig.social.whatsappNumber}</span>
-              <span className="text-[10px] text-emerald-400 font-medium">● ACTIVE</span>
+              <span className="text-[10px] text-zinc-100 font-medium">● ACTIVE</span>
             </div>
 
             <a
@@ -324,6 +541,15 @@ Email: ${formData.email || 'N/A'}`;
           <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/80 text-xs font-mono text-zinc-400 space-y-3">
             <div className="text-white font-semibold uppercase tracking-wider mb-2">
               ADDITIONAL CHANNELS
+            </div>
+            <div className="flex items-center justify-between border-b border-zinc-800/60 py-2">
+              <span>Email</span>
+              <a
+                href={`mailto:${contactInbox}`}
+                className="text-zinc-200 hover:text-white flex items-center gap-1 text-right"
+              >
+                <span>{contactInbox}</span>
+              </a>
             </div>
             <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
               <span>X (Twitter)</span>

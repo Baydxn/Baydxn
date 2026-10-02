@@ -97,11 +97,73 @@ Shared types live in `src/types/index.ts`.
 ## Contact
 
 - **WhatsApp** — [+234 912 514 2256](https://wa.me/2349125142256)
+- **Email** — [cc99187197@gmail.com](mailto:cc99187197@gmail.com)
 - **X** — [@Bayd_xn](https://x.com/Bayd_xn)
 
 The floating WhatsApp button and every CTA open WhatsApp pre-filled with:
 
 > Hello Bayd XN 👋, I came across your portfolio and I'd like to know more about your services.
+
+---
+
+## Contact Form Delivery
+
+The brief submitted on `/contact` is delivered to an inbox. The delivery channel is
+chosen automatically from environment variables — no code changes required.
+
+| Priority | Variable(s) | Provider |
+| --- | --- | --- |
+| 1 | `VITE_WEB3FORMS_ACCESS_KEY` | Web3Forms — free, unlimited, no account |
+| 2 | `VITE_EMAILJS_SERVICE_ID` + `_TEMPLATE_ID` + `_PUBLIC_KEY` | EmailJS — 200 emails/month free |
+| 3 | `VITE_CONTACT_API_URL` | Custom endpoint (see `api/contact.ts`) |
+
+If none are configured the form still works: it formats the brief and hands it to
+WhatsApp rather than pretending an email was sent.
+
+### Setup (recommended — about 2 minutes)
+
+1. Go to **[web3forms.com](https://web3forms.com)**
+2. Enter the inbox: `cc99187197@gmail.com`
+3. Copy the **Access Key** you receive by email
+4. Create `.env` in the project root:
+
+```bash
+VITE_WEB3FORMS_ACCESS_KEY=your_access_key_here
+```
+
+5. Restart the dev server (`npm run dev`) or redeploy.
+
+The inbox is bound to the key itself, so no email address needs to live in the source.
+
+### Env variables
+
+All variables are documented in [`.env.example`](./.env.example). Only `VITE_`-prefixed
+values are inlined into the browser bundle — which is correct here, because these keys
+are designed to be public. **Never** prefix a private secret with `VITE_`; server-only
+values (Resend API key, SMTP password) belong in the Vercel dashboard without the prefix.
+
+### Custom backend (optional)
+
+`api/contact.ts` is a Vercel Function that delivers briefs through
+[Resend](https://resend.com) using plain `fetch` — no extra npm dependency. Enable it by
+setting `VITE_CONTACT_API_URL=/api/contact` plus these **server-only** variables:
+
+```
+RESEND_API_KEY      # https://resend.com/api-keys
+CONTACT_TO_EMAIL    # cc99187197@gmail.com
+CONTACT_FROM_EMAIL  # onboarding@resend.dev until a domain is verified
+```
+
+`vercel.json` adds an SPA fallback so deep links such as `/work/geezmart` survive a hard
+refresh, while leaving `/api/*` routed to the function above.
+
+### Delivery behaviour
+
+- Per-field validation with accessible error messaging (`aria-invalid`, `aria-describedby`)
+- Hidden honeypot field silently absorbs bot submissions
+- 15-second request timeout, with a retryable failure state
+- Fields are disabled while a submission is in flight
+- The success state only claims delivery when the provider confirmed it
 
 ---
 
